@@ -1,0 +1,252 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Sniper Rush Defense</title>
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      overflow: hidden;
+      background: #111;
+      color: white;
+      font-family: sans-serif;
+    }
+    canvas {
+      display: block;
+    }
+    #hud, #shop {
+      position: absolute;
+      top: 10px;
+      left: 50%;
+      transform: translateX(-50%);
+      text-align: center;
+      pointer-events: none;
+    }
+    #shop {
+      top: auto;
+      bottom: 20px;
+    }
+    #defeat {
+      display: none;
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 32px;
+      background: rgba(0,0,0,0.8);
+      padding: 20px;
+      border-radius: 10px;
+    }
+    button {
+      margin: 5px;
+      pointer-events: auto;
+    }
+  </style>
+</head>
+<body>
+  <canvas id="game"></canvas>
+  <div id="hud">
+    <div>RECORD: <span id="record">0</span></div>
+    <div>SCORE: <span id="score">0</span></div>
+    <div>COINS: <span id="coins">0</span></div>
+  </div>
+  <div id="shop"></div>
+  <div id="defeat"></div>
+
+  <audio id="shootSound" src="https://cdn.pixabay.com/audio/2022/03/15/audio_87b4ba1914.mp3"></audio>
+  <audio id="hitSound" src="https://cdn.pixabay.com/audio/2022/03/15/audio_469ec31d82.mp3"></audio>
+  <audio id="headshotSound" src="https://cdn.pixabay.com/audio/2022/03/15/audio_4983a582db.mp3"></audio>
+  <audio id="deathSound" src="https://cdn.pixabay.com/audio/2022/03/15/audio_c30e070440.mp3"></audio>
+
+  <script>
+    const canvas = document.getElementById("game");
+    const ctx = canvas.getContext("2d");
+    let w = (canvas.width = innerWidth);
+    let h = (canvas.height = innerHeight);
+
+    let crosshairX = w / 2;
+    let crosshairY = h / 2;
+    let score = 0;
+    let coins = 0;
+    let record = localStorage.getItem("record") || 0;
+    let selectedWeapon = localStorage.getItem("weapon") || "Basic";
+
+    const weapons = {
+      "Basic": { damage: 1, price: 0 },
+      "AK47": { damage: 1.5, price: 5000 },
+      "Shotgun": { damage: 2, price: 15000 },
+      "Sniper": { damage: 4, price: 50000 },
+      "Golden Rifle": { damage: 6, price: 100000 },
+    };
+
+    document.getElementById("record").innerText = record;
+
+    const shootSound = document.getElementById("shootSound");
+    const hitSound = document.getElementById("hitSound");
+    const headshotSound = document.getElementById("headshotSound");
+    const deathSound = document.getElementById("deathSound");
+
+    let enemies = [];
+    let particles = [];
+    let defeat = false;
+
+    class Enemy {
+      constructor() {
+        this.x = Math.random() * w;
+        this.y = -80;
+        this.size = 40;
+        this.hp = Math.random() < 0.3 ? 5 : (Math.random() < 0.6 ? 3 : 1);
+        this.speed = 0.3 + Math.random() * 0.5;
+        this.width = 30;
+        this.height = 60;
+        this.color = this.hp >= 5 ? "#a00" : this.hp >= 3 ? "#e66" : "#ccc";
+        this.dead = false;
+      }
+      move() {
+        if (!this.dead) this.y += this.speed;
+      }
+      draw() {
+        ctx.fillStyle = this.color;
+        if (!this.dead) ctx.fillRect(this.x - this.width / 2, this.y - this.height / 2, this.width, this.height);
+        ctx.fillStyle = "#ffc";
+        ctx.beginPath();
+        ctx.arc(this.x, this.y - this.height / 2 - 10, 10, 0, Math.PI * 2);
+        ctx.fill();
+      }
+      isHit(mx, my) {
+        if (this.dead) return 0;
+        const headDist = Math.hypot(mx - this.x, my - (this.y - this.height / 2 - 10));
+        const inBody = mx > this.x - this.width / 2 && mx < this.x + this.width / 2 && my > this.y - this.height / 2 && my < this.y + this.height / 2;
+        if (headDist < 10) {
+          this.hp = 0;
+          spawnBlood(this.x, this.y - this.height / 2 - 10);
+          headshotSound.play();
+          return 2;
+        } else if (inBody) {
+          this.hp -= weapons[selectedWeapon].damage;
+          spawnBlood(mx, my);
+          hitSound.play();
+          return 1;
+        }
+        return 0;
+      }
+    }
+
+    function spawnBlood(x, y) {
+      for (let i = 0; i < 10; i++) {
+        particles.push({
+          x,
+          y,
+          dx: (Math.random() - 0.5) * 5,
+          dy: (Math.random() - 0.5) * 5,
+          life: 30 + Math.random() * 30
+        });
+      }
+    }
+
+    function drawBlood() {
+      for (let i = particles.length - 1; i >= 0; i--) {
+        let p = particles[i];
+        ctx.fillStyle = "red";
+        ctx.beginPath();
+        ctx.arc(p.x, p.y, 2, 0, Math.PI * 2);
+        ctx.fill();
+        p.x += p.dx;
+        p.y += p.dy;
+        p.dy += 0.1;
+        p.life--;
+        if (p.life <= 0) particles.splice(i, 1);
+      }
+    }
+
+    function spawnEnemy() {
+      if (defeat) return;
+      enemies.push(new Enemy());
+      setTimeout(spawnEnemy, 700 + Math.random() * 1600);
+    }
+
+    function drawCrosshair() {
+      ctx.strokeStyle = "lime";
+      ctx.beginPath();
+      ctx.moveTo(crosshairX - 10, crosshairY);
+      ctx.lineTo(crosshairX + 10, crosshairY);
+      ctx.moveTo(crosshairX, crosshairY - 10);
+      ctx.lineTo(crosshairX, crosshairY + 10);
+      ctx.stroke();
+    }
+
+    function gameLoop() {
+      ctx.clearRect(0, 0, w, h);
+      drawBlood();
+      for (let i = enemies.length - 1; i >= 0; i--) {
+        const e = enemies[i];
+        e.move();
+        e.draw();
+        if (e.hp <= 0 && !e.dead) {
+          e.dead = true;
+          coins += 100;
+          document.getElementById("coins").innerText = coins;
+          deathSound.play();
+        }
+        if (e.y + e.height / 2 > h - 30 && !e.dead) {
+          endGame();
+        }
+        if (e.dead) {
+          e.y += 2;
+          if (e.y > h + 100) enemies.splice(i, 1);
+        }
+      }
+      drawCrosshair();
+      requestAnimationFrame(gameLoop);
+    }
+
+    canvas.addEventListener("mousemove", (e) => {
+      crosshairX = e.clientX;
+      crosshairY = e.clientY;
+    });
+
+    canvas.addEventListener("click", () => {
+      if (defeat) return;
+      shootSound.play();
+      for (let e of enemies) {
+        const result = e.isHit(crosshairX, crosshairY);
+        if (result === 2) score += 2;
+        else if (result === 1) score += 1;
+      }
+      document.getElementById("score").innerText = score;
+    });
+
+    function endGame() {
+      defeat = true;
+      if (score > record) {
+        localStorage.setItem("record", score);
+        document.getElementById("record").innerText = score;
+      }
+      document.getElementById("defeat").innerText = `DEFEAT\nPUNTEGGIO: ${score}`;
+      document.getElementById("defeat").style.display = "block";
+    }
+
+    function createShop() {
+      const shop = document.getElementById("shop");
+      Object.keys(weapons).forEach(w => {
+        const btn = document.createElement("button");
+        btn.innerText = `${w} (${weapons[w].price} coins)`;
+        btn.onclick = () => {
+          if (coins >= weapons[w].price) {
+            selectedWeapon = w;
+            localStorage.setItem("weapon", w);
+            alert("Weapon equipped: " + w);
+          }
+        };
+        shop.appendChild(btn);
+      });
+    }
+
+    createShop();
+    spawnEnemy();
+    gameLoop();
+  </script>
+</body>
+</html>
